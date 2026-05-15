@@ -45,6 +45,9 @@ struct VSPipeNUTStreamInfo {
     int sampleRateNum = 0;
     int sampleRateDen = 1;
     int channelCount = 0;
+    bool hasRFrameRate = false;
+    int64_t rFrameRateNum = 0;
+    int64_t rFrameRateDen = 1;
 };
 
 class VSPipeNUTWriter {
@@ -68,6 +71,8 @@ private:
     bool writeSyncpoint(int64_t pts, std::string &errorMessage);
     bool writeMainHeader(const std::vector<VSPipeNUTStreamInfo> &streams, std::string &errorMessage) const;
     bool writeStreamHeader(int streamId, const VSPipeNUTStreamInfo &stream, std::string &errorMessage) const;
+    bool writeInfoPacketUTF8(int streamId, const std::string &name, const std::string &value, std::string &errorMessage) const;
+    bool writeStreamInfo(int streamId, const VSPipeNUTStreamInfo &stream, std::string &errorMessage) const;
     bool writeInitialSyncpoint(std::string &errorMessage);
 
     FILE *outFile = nullptr;

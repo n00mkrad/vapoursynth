@@ -50,10 +50,15 @@ Unsupported audio formats are rejected with explicit error messages.
 ## Timestamping and interleave policy
 
 ### Video PTS
-- Same as existing NUT video behavior:
-  - Prefer `_AbsoluteTime` when present
-  - Advance by `_DurationNum/_DurationDen` when present
-  - Use CFR-derived fallback duration when properties are absent
+- Default behavior (no `--cfr`) is VFR-aware:
+  - Prefer `_AbsoluteTime` when present.
+  - Advance by `_DurationNum/_DurationDen` when present.
+  - Use CFR-derived fallback duration when properties are absent.
+- `--cfr` behavior:
+  - NUT-only option.
+  - Uses one global FPS from the first selected video stream in `-o`.
+  - Requires all selected video streams to have matching normalized FPS.
+  - Ignores per-frame timing props and derives PTS from absolute frame index.
 
 ### Audio PTS
 - Derived from emitted sample count, not frame properties.
@@ -64,6 +69,12 @@ Unsupported audio formats are rejected with explicit error messages.
 - Dedicated synchronous mux loop fetches frames from both nodes and emits whichever stream has the earlier presentation time.
 - Tie-breaker prefers video.
 - This keeps output directly usable for mux/decode/playback pipelines without stream-sequential drift.
+
+### Video FPS metadata
+- Video streams emit NUT stream-level info packet `r_frame_rate` when known.
+- In `--cfr` mode all selected video streams get the global CFR value.
+- In VFR mode each stream gets its nominal FPS when available.
+- VFR streams without nominal FPS omit `r_frame_rate`.
 
 ## Payload writing
 - Frame headers are emitted immediately before payload.

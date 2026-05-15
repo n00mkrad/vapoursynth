@@ -53,6 +53,14 @@ The main missing piece was orchestration of two output nodes into one interleave
 - Timestamp comparisons are made in NUT ticks using integer arithmetic for stream ordering.
 - This avoids floating-point drift in long-running sessions and keeps mux ordering deterministic for equal-time boundaries.
 
+## Timing follow-up
+- Added NUT-only `--cfr` mode for deterministic video timing across multi-video muxes.
+- `--cfr` uses one global FPS (first selected `-o` video stream) and requires all selected video streams to match it.
+- Added stream-level `r_frame_rate` NUT info metadata for video streams:
+  - CFR mode writes the global value for all video streams.
+  - VFR mode writes per-stream nominal FPS when known.
+  - Unknown nominal FPS in VFR mode is allowed and simply omits metadata.
+
 ## Relationship to earlier video-only notes
 - `notes/vspipe-nut-feasibility.md` and `notes/vspipe-nut-poc-design.md` describe the original video-focused NUT implementation.
 - This file documents the additional audio and dual-stream feasibility decisions.

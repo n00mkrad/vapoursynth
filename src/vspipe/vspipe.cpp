@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <memory>
 #include <set>
+#include <numeric>
 #include "../common/wave.h"
 #ifdef VS_TARGET_OS_WINDOWS
 #include <io.h>
@@ -119,6 +120,7 @@ struct VSPipeOptions {
     bool frameRefDebug = false;
     bool printFilterTime = false;
     bool noDepWarn = false;
+    bool nutForceCfr = false;
     std::filesystem::path scriptFilename;
     std::filesystem::path outputFilename;
     std::filesystem::path timecodesFilename;
@@ -325,6 +327,24 @@ static int64_t convertDurationToNutTicks(int64_t durationNum, int64_t durationDe
     return std::max<int64_t>(1, static_cast<int64_t>(ticks + 0.5L));
 }
 
+static int64_t getNutCfrFramePts(int64_t frameIndex, int64_t fpsNum, int64_t fpsDen, int64_t timebaseNum, int64_t timebaseDen) {
+    if (frameIndex <= 0)
+        return 0;
+    long double num = static_cast<long double>(frameIndex) * static_cast<long double>(fpsDen) * static_cast<long double>(timebaseDen);
+    long double den = static_cast<long double>(fpsNum) * static_cast<long double>(timebaseNum);
+    long double ticks = num / den;
+    return std::max<int64_t>(0, static_cast<int64_t>(ticks + 0.5L));
+}
+
+static bool normalizePositiveRational(int64_t num, int64_t den, int64_t &normalizedNum, int64_t &normalizedDen) {
+    if (num <= 0 || den <= 0)
+        return false;
+    int64_t d = std::gcd(num, den);
+    normalizedNum = num / d;
+    normalizedDen = den / d;
+    return true;
+}
+
 static int64_t getNutFramePts(const VSFrame *frame, const VSAPI *vsapi, int64_t fallbackPts, int64_t timebaseNum, int64_t timebaseDen) {
     int64_t pts = fallbackPts;
     const VSMap *props = vsapi->getFramePropertiesRO(frame);
@@ -386,6 +406,9 @@ struct VSPipeNUTMuxStreamContext {
     int64_t audioSamplesWritten = 0;
     int64_t videoCurrentPts = 0;
     int64_t videoFallbackDurationTicks = 1;
+    bool useCfrPts = false;
+    int64_t cfrFpsNum = 0;
+    int64_t cfrFpsDen = 1;
     const VSFrame *pendingFrame = nullptr;
     int64_t pendingPts = 0;
 };
@@ -407,6 +430,10 @@ static bool fetchNutStreamFrame(VSPipeNUTMuxStreamContext &stream, VSPipeOutputD
     }
 
     if (stream.isVideo) {
+        if (stream.useCfrPts) {
+            stream.pendingPts = getNutCfrFramePts(stream.frameIndex, stream.cfrFpsNum, stream.cfrFpsDen, data->nutTimebaseNum, data->nutTimebaseDen);
+            return true;
+        }
         stream.pendingPts = getNutFramePts(stream.pendingFrame, data->vsapi, stream.videoCurrentPts, data->nutTimebaseNum, data->nutTimebaseDen);
     } else {
         stream.pendingPts = convertAudioSamplesToNutTicks(stream.audioSamplesWritten, stream.audioInfo->sampleRate, data->nutTimebaseNum, data->nutTimebaseDen);
@@ -462,7 +489,8 @@ static bool outputNutStreamsNode(const VSPipeOptions &opts, VSPipeOutputData *da
             break;
 
         if (stream.isVideo) {
-            stream.videoCurrentPts = stream.pendingPts + getNutFrameDurationTicks(stream.pendingFrame, data->vsapi, stream.videoFallbackDurationTicks, data->nutTimebaseNum, data->nutTimebaseDen);
+            if (!stream.useCfrPts)
+                stream.videoCurrentPts = stream.pendingPts + getNutFrameDurationTicks(stream.pendingFrame, data->vsapi, stream.videoFallbackDurationTicks, data->nutTimebaseNum, data->nutTimebaseDen);
         } else {
             stream.audioSamplesWritten += data->vsapi->getFrameLength(stream.pendingFrame);
         }
@@ -1007,6 +1035,7 @@ static void printHelp() {
         "  -u, --audio-outputindex N[,M,...] Select secondary audio output index or comma-separated audio indices for NUT muxing\n"
         "  -r, --requests N                  Set number of concurrent frame requests\n"
         "  -c, --container <y4m/nut/wav/w64> Add headers for the specified format to the output (use nut to carry multiple streams)\n"
+        "      --cfr                         Force CFR timestamps for NUT video streams\n"
         "  -t, --timecodes FILE              Write timecodes v2 file\n"
         "  -j, --json FILE                   Write properties of output frames in json format to file\n"
         "  -p, --progress                    Print progress to stderr\n"
@@ -1204,6 +1233,8 @@ static int parseOptions(VSPipeOptions &opts, int argc, char **argv) {
             }
 
             arg++;
+        } else if (argString == "--cfr") {
+            opts.nutForceCfr = true;
         } else if (argString == "-a" || argString == "--arg") {
             if (argc <= arg + 1) {
                 fprintf(stderr, "No argument specified\n");
@@ -1321,6 +1352,10 @@ int main(int argc, char **argv) {
     int parseResult = parseOptions(opts, argc, argv);
     if (parseResult)
         return parseResult;
+    if (opts.mode == VSPipeMode::Output && opts.nutForceCfr && opts.outputHeaders != VSPipeHeaders::NUT) {
+        fprintf(stderr, "Error: --cfr can only be used together with -c nut\n");
+        return 1;
+    }
     if (opts.mode == VSPipeMode::Output && !opts.audioOutputIndices.empty() && opts.outputHeaders != VSPipeHeaders::NUT) {
         fprintf(stderr, "Error: --audio-outputindex can only be used together with -c nut\n");
         return 1;
@@ -1519,6 +1554,11 @@ int main(int argc, char **argv) {
     bool nutOutputMode = opts.mode == VSPipeMode::Output && opts.outputHeaders == VSPipeHeaders::NUT;
     if (nutOutputMode && !opts.outputIndexExplicit && !selectedAudioIndices.empty())
         selectedVideoIndices.clear();
+    if (nutOutputMode && opts.nutForceCfr && selectedVideoIndices.empty()) {
+        fprintf(stderr, "Error: --cfr requires at least one selected video stream\n");
+        vssapi->freeScript(se);
+        return 1;
+    }
 
     int primaryOutputIndex = opts.outputIndex;
     if (nutOutputMode) {
@@ -1692,6 +1732,9 @@ int main(int argc, char **argv) {
             std::vector<VSPipeNUTStreamInfo> streamInfos;
             streamContexts.reserve(selectedVideoIndices.size() + selectedAudioIndices.size());
             streamInfos.reserve(selectedVideoIndices.size() + selectedAudioIndices.size());
+            int64_t cfrGlobalNum = 0;
+            int64_t cfrGlobalDen = 1;
+            bool cfrGlobalSet = false;
 
             int streamId = 0;
             auto appendStream = [&](int selectedIndex, bool fromVideoList) -> bool {
@@ -1700,7 +1743,7 @@ int main(int argc, char **argv) {
                     return false;
 
                 int selectedNodeType = vsapi->getNodeType(selectedNode);
-                bool allowLegacyAudioOnPrimaryList = !nutMultiStreamMode && selectedAudioIndices.empty() && selectedVideoIndices.size() == 1;
+                bool allowLegacyAudioOnPrimaryList = !opts.nutForceCfr && !nutMultiStreamMode && selectedAudioIndices.empty() && selectedVideoIndices.size() == 1;
 
                 if (fromVideoList) {
                     if (selectedNodeType != mtVideo && !(allowLegacyAudioOnPrimaryList && selectedNodeType == mtAudio)) {
@@ -1719,6 +1762,8 @@ int main(int argc, char **argv) {
                 if (selectedNodeType == mtVideo) {
                     const VSVideoInfo *vi = vsapi->getVideoInfo(selectedNode);
                     std::array<uint8_t, 4> fourCC{};
+                    int64_t normalizedFpsNum = 0;
+                    int64_t normalizedFpsDen = 1;
 
                     if (!isConstantVideoFormat(vi)) {
                         data->errorMessage = "Error: output index " + std::to_string(selectedIndex) + " has varying dimensions";
@@ -1730,12 +1775,39 @@ int main(int argc, char **argv) {
                         data->outputError = true;
                         return false;
                     }
+                    if (opts.nutForceCfr) {
+                        if (!normalizePositiveRational(vi->fpsNum, vi->fpsDen, normalizedFpsNum, normalizedFpsDen)) {
+                            data->errorMessage = "Error: --cfr requires a valid nominal FPS for video output index " + std::to_string(selectedIndex);
+                            data->outputError = true;
+                            return false;
+                        }
+                        if (!cfrGlobalSet) {
+                            cfrGlobalNum = normalizedFpsNum;
+                            cfrGlobalDen = normalizedFpsDen;
+                            cfrGlobalSet = true;
+                        } else if (normalizedFpsNum != cfrGlobalNum || normalizedFpsDen != cfrGlobalDen) {
+                            data->errorMessage = "Error: --cfr requires all selected video streams to have identical FPS";
+                            data->outputError = true;
+                            return false;
+                        }
+                    } else {
+                        normalizePositiveRational(vi->fpsNum, vi->fpsDen, normalizedFpsNum, normalizedFpsDen);
+                    }
 
                     VSPipeNUTStreamInfo streamInfo;
                     streamInfo.type = VSPipeNUTStreamType::Video;
                     streamInfo.fourCC = fourCC;
                     streamInfo.width = vi->width;
                     streamInfo.height = vi->height;
+                    if (opts.nutForceCfr && cfrGlobalSet) {
+                        streamInfo.hasRFrameRate = true;
+                        streamInfo.rFrameRateNum = cfrGlobalNum;
+                        streamInfo.rFrameRateDen = cfrGlobalDen;
+                    } else if (normalizedFpsNum > 0 && normalizedFpsDen > 0) {
+                        streamInfo.hasRFrameRate = true;
+                        streamInfo.rFrameRateNum = normalizedFpsNum;
+                        streamInfo.rFrameRateDen = normalizedFpsDen;
+                    }
                     streamInfos.push_back(streamInfo);
 
                     VSPipeNUTMuxStreamContext context;
@@ -1749,6 +1821,11 @@ int main(int argc, char **argv) {
                     context.videoFallbackDurationTicks = 1;
                     if (vi->fpsNum > 0 && vi->fpsDen > 0)
                         context.videoFallbackDurationTicks = convertDurationToNutTicks(vi->fpsDen, vi->fpsNum, data->nutTimebaseNum, data->nutTimebaseDen);
+                    if (opts.nutForceCfr && cfrGlobalSet) {
+                        context.useCfrPts = true;
+                        context.cfrFpsNum = cfrGlobalNum;
+                        context.cfrFpsDen = cfrGlobalDen;
+                    }
                     streamContexts.push_back(context);
                 } else {
                     const VSAudioInfo *ai = vsapi->getAudioInfo(selectedNode);
@@ -1810,6 +1887,10 @@ int main(int argc, char **argv) {
 
             if (success && streamContexts.empty()) {
                 fprintf(stderr, "Error: no streams selected for NUT output\n");
+                success = false;
+            }
+            if (success && opts.nutForceCfr && !cfrGlobalSet) {
+                fprintf(stderr, "Error: --cfr requires at least one selected video stream\n");
                 success = false;
             }
 

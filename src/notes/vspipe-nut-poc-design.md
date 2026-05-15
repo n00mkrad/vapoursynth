@@ -45,6 +45,23 @@ Header packet/footer layout follows the reference behavior:
   - RGB planes in current GBR remap order.
   - YUV/Gray planes in native plane order.
 
+## Timing update (`--cfr` + explicit FPS metadata)
+- New option: `--cfr` (NUT-only).
+- `--cfr` applies one global FPS to all selected video streams.
+  - Global FPS source is the first selected `-o` video stream.
+  - All selected video streams must have valid nominal FPS and must match exactly after rational normalization.
+- `--cfr` video PTS policy:
+  - Ignores per-frame `_AbsoluteTime` and `_DurationNum/_DurationDen`.
+  - Computes PTS from absolute frame index and global FPS to avoid cumulative rounding drift.
+- Default (no `--cfr`) keeps existing VFR-aware behavior:
+  - Uses `_AbsoluteTime` when present.
+  - Uses `_DurationNum/_DurationDen` when present.
+  - Uses CFR fallback duration only when timing properties are missing.
+- Stream metadata now emits NUT info packets with `r_frame_rate` per video stream:
+  - CFR mode: all video streams get the global FPS value.
+  - VFR mode: a stream gets its own nominal FPS if available.
+  - VFR mode with unknown nominal FPS omits `r_frame_rate` for that stream.
+
 ## Rawvideo fourcc mapping used
 - RGB family (existing mapping, unchanged):
   - Integer: `G3[0][8]`, `G3[0][9]`, `G3[0][10]`, `G3[0][12]`, `G3[0][14]`, `G3[0][16]`
