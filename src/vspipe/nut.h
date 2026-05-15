@@ -29,12 +29,31 @@
 #include <string>
 #include <vector>
 
+enum class VSPipeNUTStreamType {
+    Video,
+    Audio
+};
+
+struct VSPipeNUTStreamInfo {
+    VSPipeNUTStreamType type = VSPipeNUTStreamType::Video;
+    std::array<uint8_t, 4> fourCC{};
+    int width = 0;
+    int height = 0;
+    int sampleWidth = 1;
+    int sampleHeight = 1;
+    int colorspaceType = 0;
+    int sampleRateNum = 0;
+    int sampleRateDen = 1;
+    int channelCount = 0;
+};
+
 class VSPipeNUTWriter {
 public:
-    bool initialize(FILE *outFile, const VSVideoInfo *vi, std::string &errorMessage);
-    bool writeFrameHeader(int64_t pts, size_t frameSize, bool keyFrame, std::string &errorMessage);
+    bool initialize(FILE *outFile, const std::vector<VSPipeNUTStreamInfo> &streams, std::string &errorMessage);
+    bool writeFrameHeader(int streamId, int64_t pts, size_t frameSize, bool keyFrame, std::string &errorMessage);
 
     static bool getVideoFourCC(const VSVideoFormat &format, std::array<uint8_t, 4> &fourCC);
+    static bool getAudioFourCC(const VSAudioFormat &format, std::array<uint8_t, 4> &fourCC);
 
 private:
     static uint32_t crc32(const uint8_t *buf, size_t len);
@@ -47,8 +66,8 @@ private:
     bool writeBuffer(const std::vector<uint8_t> &buffer, const char *context, std::string &errorMessage) const;
     bool writePacket(uint64_t startcode, const std::vector<uint8_t> &payload, std::string &errorMessage) const;
     bool writeSyncpoint(int64_t pts, std::string &errorMessage);
-    bool writeMainHeader(const VSVideoInfo *vi, std::string &errorMessage) const;
-    bool writeStreamHeader(const VSVideoInfo *vi, const std::array<uint8_t, 4> &fourCC, std::string &errorMessage) const;
+    bool writeMainHeader(const std::vector<VSPipeNUTStreamInfo> &streams, std::string &errorMessage) const;
+    bool writeStreamHeader(int streamId, const VSPipeNUTStreamInfo &stream, std::string &errorMessage) const;
     bool writeInitialSyncpoint(std::string &errorMessage);
 
     FILE *outFile = nullptr;

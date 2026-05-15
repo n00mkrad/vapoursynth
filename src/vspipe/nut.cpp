@@ -31,6 +31,7 @@ constexpr uint8_t kNutIdString[] = "nut/multimedia container";
 constexpr uint64_t kNutVersion = 3;
 constexpr uint64_t kMaxDistance = 32768;
 constexpr uint64_t kVideoClass = 0;
+constexpr uint64_t kAudioClass = 1;
 constexpr uint64_t kStreamFlagsNone = 0;
 constexpr uint64_t kTimebaseNum = 1;
 constexpr uint64_t kTimebaseDen = 1000000;
@@ -44,27 +45,34 @@ constexpr uint64_t kFlagInvalid = 8192;
 
 }
 
-bool VSPipeNUTWriter::initialize(FILE *file, const VSVideoInfo *vi, std::string &errorMessage) {
-    outFile = file;
-    lastSyncpointPosition = -1;
-    std::array<uint8_t, 4> fourCC{};
-    if (!getVideoFourCC(vi->format, fourCC)) {
-        errorMessage = "Error: no supported NUT fourcc exists for current video format";
+bool VSPipeNUTWriter::initialize(FILE *file, const std::vector<VSPipeNUTStreamInfo> &streams, std::string &errorMessage) {
+    if (streams.empty()) {
+        errorMessage = "Error: NUT stream list is empty";
         return false;
     }
 
+    outFile = file;
+    lastSyncpointPosition = -1;
+
     if (!writeBuffer(std::vector<uint8_t>(kNutIdString, kNutIdString + sizeof(kNutIdString)), "initial NUT identifier", errorMessage))
         return false;
-    if (!writeMainHeader(vi, errorMessage))
+    if (!writeMainHeader(streams, errorMessage))
         return false;
-    if (!writeStreamHeader(vi, fourCC, errorMessage))
-        return false;
+    for (size_t i = 0; i < streams.size(); i++) {
+        if (!writeStreamHeader(static_cast<int>(i), streams[i], errorMessage))
+            return false;
+    }
     if (!writeInitialSyncpoint(errorMessage))
         return false;
     return true;
 }
 
-bool VSPipeNUTWriter::writeFrameHeader(int64_t pts, size_t frameSize, bool keyFrame, std::string &errorMessage) {
+bool VSPipeNUTWriter::writeFrameHeader(int streamId, int64_t pts, size_t frameSize, bool keyFrame, std::string &errorMessage) {
+    if (streamId < 0) {
+        errorMessage = "Error: invalid negative NUT stream id";
+        return false;
+    }
+
     if (!writeSyncpoint(pts, errorMessage))
         return false;
 
@@ -72,7 +80,7 @@ bool VSPipeNUTWriter::writeFrameHeader(int64_t pts, size_t frameSize, bool keyFr
     frameHeader.reserve(64);
 
     frameHeader.push_back(keyFrame ? 1 : 2);
-    appendV(frameHeader, 0);
+    appendV(frameHeader, static_cast<uint64_t>(streamId));
     appendV(frameHeader, static_cast<uint64_t>(pts) + (1ULL << msbPtsShift));
     appendV(frameHeader, static_cast<uint64_t>(frameSize));
     appendU32(frameHeader, crc32(frameHeader.data(), frameHeader.size()));
@@ -219,6 +227,23 @@ bool VSPipeNUTWriter::getVideoFourCC(const VSVideoFormat &format, std::array<uin
     return false;
 }
 
+bool VSPipeNUTWriter::getAudioFourCC(const VSAudioFormat &format, std::array<uint8_t, 4> &fourCC) {
+    if (format.sampleType == stInteger) {
+        if (format.bitsPerSample == 16 || format.bitsPerSample == 24 || format.bitsPerSample == 32) {
+            fourCC = { 'P', 'S', 'D', static_cast<uint8_t>(format.bitsPerSample) };
+            return true;
+        }
+        return false;
+    }
+
+    if (format.sampleType == stFloat && format.bitsPerSample == 32) {
+        fourCC = { 'P', 'F', 'D', 32 };
+        return true;
+    }
+
+    return false;
+}
+
 uint32_t VSPipeNUTWriter::crc32(const uint8_t *buf, size_t len) {
     static constexpr uint32_t table[16] = {
         0x00000000, 0x04C11DB7, 0x09823B6E, 0x0D4326D9,
@@ -307,12 +332,12 @@ bool VSPipeNUTWriter::writePacket(uint64_t startcode, const std::vector<uint8_t>
     return writeBuffer(packet, "NUT packet", errorMessage);
 }
 
-bool VSPipeNUTWriter::writeMainHeader(const VSVideoInfo *vi, std::string &errorMessage) const {
+bool VSPipeNUTWriter::writeMainHeader(const std::vector<VSPipeNUTStreamInfo> &streams, std::string &errorMessage) const {
     std::vector<uint8_t> payload;
     payload.reserve(128);
 
     appendV(payload, kNutVersion);
-    appendV(payload, 1);
+    appendV(payload, static_cast<uint64_t>(streams.size()));
     appendV(payload, kMaxDistance);
 
     appendV(payload, 1);
@@ -343,13 +368,18 @@ bool VSPipeNUTWriter::writeMainHeader(const VSVideoInfo *vi, std::string &errorM
     return writePacket(kMainStartcode, payload, errorMessage);
 }
 
-bool VSPipeNUTWriter::writeStreamHeader(const VSVideoInfo *vi, const std::array<uint8_t, 4> &fourCC, std::string &errorMessage) const {
+bool VSPipeNUTWriter::writeStreamHeader(int streamId, const VSPipeNUTStreamInfo &stream, std::string &errorMessage) const {
+    if (streamId < 0) {
+        errorMessage = "Error: invalid negative NUT stream id";
+        return false;
+    }
+
     std::vector<uint8_t> payload;
     payload.reserve(128);
 
-    appendV(payload, 0);
-    appendV(payload, kVideoClass);
-    appendVB(payload, fourCC.data(), fourCC.size());
+    appendV(payload, static_cast<uint64_t>(streamId));
+    appendV(payload, stream.type == VSPipeNUTStreamType::Video ? kVideoClass : kAudioClass);
+    appendVB(payload, stream.fourCC.data(), stream.fourCC.size());
     appendV(payload, 0);
     appendV(payload, msbPtsShift);
     appendV(payload, kMaxPtsDistance);
@@ -357,11 +387,17 @@ bool VSPipeNUTWriter::writeStreamHeader(const VSVideoInfo *vi, const std::array<
     appendV(payload, kStreamFlagsNone);
     appendV(payload, 0);
 
-    appendV(payload, static_cast<uint64_t>(vi->width));
-    appendV(payload, static_cast<uint64_t>(vi->height));
-    appendV(payload, 1);
-    appendV(payload, 1);
-    appendV(payload, 0);
+    if (stream.type == VSPipeNUTStreamType::Video) {
+        appendV(payload, static_cast<uint64_t>(stream.width));
+        appendV(payload, static_cast<uint64_t>(stream.height));
+        appendV(payload, static_cast<uint64_t>(stream.sampleWidth));
+        appendV(payload, static_cast<uint64_t>(stream.sampleHeight));
+        appendV(payload, static_cast<uint64_t>(stream.colorspaceType));
+    } else {
+        appendV(payload, static_cast<uint64_t>(stream.sampleRateNum));
+        appendV(payload, static_cast<uint64_t>(stream.sampleRateDen));
+        appendV(payload, static_cast<uint64_t>(stream.channelCount));
+    }
 
     return writePacket(kStreamStartcode, payload, errorMessage);
 }
