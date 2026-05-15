@@ -177,6 +177,9 @@ bool VSPipeNUTWriter::getVideoFourCC(const VSVideoFormat &format, std::array<uin
         bool is420 = format.subSamplingW == 1 && format.subSamplingH == 1;
         bool is422 = format.subSamplingW == 1 && format.subSamplingH == 0;
         bool is444 = format.subSamplingW == 0 && format.subSamplingH == 0;
+        bool is410 = format.subSamplingW == 2 && format.subSamplingH == 2;
+        bool is411 = format.subSamplingW == 2 && format.subSamplingH == 0;
+        bool is440 = format.subSamplingW == 0 && format.subSamplingH == 1;
         uint8_t subSamplingCode = 0;
         if (is420)
             subSamplingCode = 11;
@@ -184,6 +187,12 @@ bool VSPipeNUTWriter::getVideoFourCC(const VSVideoFormat &format, std::array<uin
             subSamplingCode = 10;
         else if (is444)
             subSamplingCode = 0;
+        else if (is410)
+            subSamplingCode = 22;
+        else if (is411)
+            subSamplingCode = 20;
+        else if (is440)
+            subSamplingCode = 1;
         else
             return false;
 
@@ -192,6 +201,12 @@ bool VSPipeNUTWriter::getVideoFourCC(const VSVideoFormat &format, std::array<uin
                 fourCC = { 'I', '4', '2', '0' };
             else if (is422)
                 fourCC = { '4', '2', '2', 'P' };
+            else if (is410)
+                fourCC = { 'Y', 'U', 'V', '9' };
+            else if (is411)
+                fourCC = { '4', '1', '1', 'P' };
+            else if (is440)
+                fourCC = { '4', '4', '0', 'P' };
             else
                 fourCC = { '4', '4', '4', 'P' };
             return true;

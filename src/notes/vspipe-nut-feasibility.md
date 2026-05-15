@@ -37,6 +37,9 @@ The `vspipe` architecture already exposes clean insertion points:
   - YUV: planar `4:2:0`, `4:2:2`, `4:4:4`, integer `8/9/10/12/14/16` bit.
     - 8-bit uses legacy compatibility tags (`I420`, `422P`, `444P`).
     - >8-bit uses `Y3` generic scheme tags.
+  - YUV: planar `4:1:0`, `4:1:1`, `4:4:0`, integer `8/9/10/12/14/16` bit.
+    - 8-bit uses legacy compatibility tags (`YUV9`, `411P`, `440P`).
+    - >8-bit uses `Y3` generic scheme tags.
   - Gray: integer `8/9/10/12/14/16` bit.
     - 8-bit uses legacy compatibility tag (`Y800`).
     - >8-bit uses `Y1` generic scheme tags.

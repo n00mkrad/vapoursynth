@@ -57,10 +57,16 @@ Header packet/footer layout follows the reference behavior:
     - 4:2:0: `I420` (legacy compatibility tag)
     - 4:2:2: `422P` (legacy compatibility tag)
     - 4:4:4: `444P` (legacy compatibility tag)
+    - 4:1:0: `YUV9` (legacy compatibility tag)
+    - 4:1:1: `411P` (legacy compatibility tag)
+    - 4:4:0: `440P` (legacy compatibility tag)
   - Integer >8-bit:
     - 4:2:0: `Y3[11][9/10/12/14/16]`
     - 4:2:2: `Y3[10][9/10/12/14/16]`
     - 4:4:4: `Y3[0][9/10/12/14/16]`
+    - 4:1:0: `Y3[22][9/10/12/14/16]`
+    - 4:1:1: `Y3[20][9/10/12/14/16]`
+    - 4:4:0: `Y3[1][9/10/12/14/16]`
 
 ## v1 validation rules in `vspipe`
 - `-c nut` requires:
@@ -71,6 +77,7 @@ Header packet/footer layout follows the reference behavior:
   - RGB (existing behavior)
   - Gray integer `8/9/10/12/14/16`
   - YUV planar `420/422/444`, integer `8/9/10/12/14/16`
+  - YUV planar `410/411/440`, integer `8` and `9/10/12/14/16`
 - Rejected:
   - Audio output with NUT
   - YUV/Gray float formats
