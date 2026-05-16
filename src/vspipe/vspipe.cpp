@@ -1971,8 +1971,8 @@ int main(int argc, char **argv) {
 
         std::chrono::duration<double> elapsedSeconds = std::chrono::steady_clock::now() - data->startTime;
         if (opts.mode == VSPipeMode::Output) {
-            if (nutOutputMode)
-                fprintf(stderr, "Output %d video frames and %" PRId64 " audio samples in %.2f seconds\n", data->totalFrames, data->totalSamples, elapsedSeconds.count());
+            if (nutOutputMode && data->totalSamples > 0)
+                fprintf(stderr, "Output %d video frames and %" PRId64 " audio samples in %.2f seconds (%.2f fps, %.2f sps)\n", data->totalFrames, data->totalSamples, elapsedSeconds.count(), data->totalFrames / elapsedSeconds.count(), data->totalSamples / elapsedSeconds.count());
             else if (vsapi->getNodeType(node) == mtVideo)
                 fprintf(stderr, "Output %d frames in %.2f seconds (%.2f fps)\n", data->totalFrames, elapsedSeconds.count(), data->totalFrames / elapsedSeconds.count());
             else
